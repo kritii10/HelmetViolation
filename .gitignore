@@ -1,0 +1,13 @@
+.env
+__pycache__/
+*.py[cod]
+.DS_Store
+node_modules/
+dist/
+storage/uploads/*
+storage/evidence/*
+storage/outputs/*
+!storage/uploads/.gitkeep
+!storage/evidence/.gitkeep
+!storage/outputs/.gitkeep
+models/*.pt

@@ -1,0 +1,97 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:?RABBITMQ_DEFAULT_USER must be set}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?RABBITMQ_DEFAULT_PASS must be set}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  violation-service:
+    build: ./services/violation_service
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8002/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./services/api
+    environment:
+      RABBITMQ_URL: ${RABBITMQ_URL:?RABBITMQ_URL must be set}
+      VIOLATION_SERVICE_URL: ${VIOLATION_SERVICE_URL:-http://violation-service:8002}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-200}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./storage:/app/storage
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      violation-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  video-processor:
+    build: ./services/video_processor
+    command: celery -A app.celery_app.celery_app worker --loglevel=info
+    environment:
+      RABBITMQ_URL: ${RABBITMQ_URL:?RABBITMQ_URL must be set}
+      VIOLATION_SERVICE_URL: ${VIOLATION_SERVICE_URL:-http://violation-service:8002}
+      HELMET_MODEL_PATH: ${HELMET_MODEL_PATH:-/app/models/helmet_model.pt}
+      YOLO_CONFIDENCE: ${YOLO_CONFIDENCE:-0.40}
+      VIOLATION_CONFIRMATION_FRAMES: ${VIOLATION_CONFIRMATION_FRAMES:-4}
+      VIOLATION_MAX_FRAME_GAP: ${VIOLATION_MAX_FRAME_GAP:-1}
+    volumes:
+      - ./storage:/app/storage
+      - ./models:/app/models:ro
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      violation-service:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

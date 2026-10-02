@@ -1,0 +1,5 @@
+celery==5.4.0
+httpx==0.28.1
+opencv-python-headless==4.10.0.84
+ultralytics==8.3.52
+pandas==2.2.3
